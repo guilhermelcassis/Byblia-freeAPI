@@ -1,0 +1,14 @@
+fastapi>=0.103.1
+uvicorn>=0.23.2
+python-dotenv>=1.0.0
+supabase-py>=2.0.0
+pydantic>=2.0.0
+pydantic-ai>=0.1.0
+deepseek>=0.1.0
+python-multipart>=0.0.6
+httpx>=0.24.0  # Para requisições HTTP assíncronas
+typing-extensions>=4.0.0
+asyncio>=3.4.3  # Para operações assíncronas
+matplotlib>=3.5.0  # Para visualizações (se necessário)
+numpy>=1.20.0  # Para manipulação de dados (se necessário)
+pytest>=7.0.0  # Para testes (opcional) 

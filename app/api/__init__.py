@@ -1,0 +1,4 @@
+"""
+API package for the application.
+This package contains all API-related modules.
+""" 

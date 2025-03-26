@@ -1,0 +1,4 @@
+"""
+Endpoints package for the application.
+This package contains all API endpoint modules.
+""" 
