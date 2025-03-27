@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, Literal
 
 class InteractionBase(BaseModel):
     user_prompt: str
@@ -20,9 +20,16 @@ class Interaction(InteractionBase):
 
 class ChatRequest(BaseModel):
     prompt: str
+    # Streaming é sempre ativo, então não precisamos mais da opção
 
-class ChatResponse(BaseModel):
-    message: str
+class StreamChunk(BaseModel):
+    """Modelo para um pedaço de streaming da resposta"""
+    type: Literal["chunk"]
+    content: str
+
+class StreamComplete(BaseModel):
+    """Modelo para a conclusão do streaming com metadados"""
+    type: Literal["complete"]
     token_usage: int
     temperature: float
     interaction_id: int

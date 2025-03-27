@@ -127,40 +127,139 @@ async def generate_response(prompt, temperature=None):
             print(f"Erro definitivo ao gerar resposta: {str(e2)}")
             return f"Erro ao processar sua pergunta. Por favor, tente novamente mais tarde.", 0, temperature
 
-async def process_chat_request(prompt: str, temperature: float = None):
+# A função process_chat_request foi removida pois se tornou obsoleta.
+# Utilize generate_streaming_response para todas as interações com a API.
+
+async def generate_streaming_response(prompt: str, temperature=None):
     """
-    Processa uma requisição de chat e salva no Supabase.
+    Gera uma resposta do modelo em streaming, enviando cada parte para o cliente em tempo real.
     
     Args:
         prompt: Pergunta do usuário
-        temperature: Temperatura opcional (agora sempre será None)
+        temperature: Temperatura usada (se None, uma nova será gerada)
         
-    Returns:
-        Dicionário com a resposta e metadados
+    Yields:
+        Chunks de texto ou dicionário final com metadados
     """
-    # Gerar resposta com temperatura aleatória
-    message, token_usage, used_temperature = await generate_response(prompt, None)
+    # Configurar o agente
+    agent, model = setup_agent()
     
-    # Salvar no Supabase
-    result = await InteractionService.save_interaction(
-        user_prompt=prompt,
-        model=DEFAULT_MODEL,
-        temperature=used_temperature,
-        message=message,
-        token_usage=token_usage
-    )
+    # Se a temperatura não for fornecida, gerar uma nova
+    if temperature is None:
+        temperature = get_random_temperature()
     
-    # Logar resultado para debug
-    if not result.get("success", False):
-        print(f"Aviso: Não foi possível salvar a interação. Erro: {result.get('error', 'desconhecido')}")
+    # Atualizar a temperatura do agente para esta pergunta
+    agent.model_settings['temperature'] = temperature
     
-    # Obter o ID da interação
-    interaction_id = result.get("interaction_id")
+    # Variáveis para armazenar informações
+    full_message = ""
     
-    # Retornar resposta e metadados
-    return {
-        "message": message,
-        "token_usage": token_usage,
-        "temperature": used_temperature,
-        "interaction_id": interaction_id
-    } 
+    try:
+        # Usar streaming para gerar a resposta
+        async with agent.run_stream(prompt) as result:
+            async for chunk in result.stream_text(delta=True):
+                # Adicionar chunk à mensagem completa
+                full_message += chunk
+                # Enviar chunk diretamente para o cliente
+                yield chunk
+                
+        # Extrair informações de uso
+        usage_data = result.usage()
+        usage_dict = to_jsonable_python(usage_data)
+        total_tokens = usage_dict.get('total_tokens', 0)
+        
+        # Salvar no Supabase
+        try:
+            supabase_result = await InteractionService.save_interaction(
+                user_prompt=prompt,
+                model=DEFAULT_MODEL,
+                temperature=temperature,
+                message=full_message,
+                token_usage=total_tokens
+            )
+            
+            # Obter o ID da interação
+            interaction_id = supabase_result.get("interaction_id")
+            # Garantir que interaction_id seja sempre um inteiro válido
+            if interaction_id is None:
+                print("Aviso: Não foi possível obter um ID de interação válido do Supabase")
+                interaction_id = 0
+        except Exception as supabase_error:
+            print(f"Erro ao salvar interação no Supabase: {str(supabase_error)}")
+            interaction_id = 0  # Valor padrão em caso de erro
+        
+        # Enviar metadados finais
+        yield {
+            "token_usage": total_tokens,
+            "temperature": temperature,
+            "interaction_id": interaction_id
+        }
+    except Exception as e:
+        # Log do erro
+        print(f"Erro ao gerar resposta em streaming: {str(e)}")
+        
+        # Tentar um fallback sem streaming
+        try:
+            # Resetar o agente com a mesma temperatura
+            agent.model_settings['temperature'] = temperature
+            
+            # Usar o método não-streaming como fallback
+            result = await agent.run(prompt)
+            
+            # Tente obter a resposta de diferentes maneiras possíveis
+            if hasattr(result, 'content'):
+                full_message = result.content
+            elif hasattr(result, 'message'):
+                full_message = result.message
+            else:
+                full_message = str(result)
+                
+            # Enviar a mensagem completa como um único chunk
+            yield full_message
+            
+            # Tentar obter informações de uso
+            total_tokens = 0
+            try:
+                if hasattr(result, 'usage'):
+                    usage_dict = to_jsonable_python(result.usage)
+                    total_tokens = usage_dict.get('total_tokens', 0)
+            except:
+                pass
+                
+            # Salvar no Supabase
+            try:
+                supabase_result = await InteractionService.save_interaction(
+                    user_prompt=prompt,
+                    model=DEFAULT_MODEL,
+                    temperature=temperature,
+                    message=full_message,
+                    token_usage=total_tokens
+                )
+                
+                # Obter o ID da interação
+                interaction_id = supabase_result.get("interaction_id")
+                # Garantir que interaction_id seja sempre um inteiro válido
+                if interaction_id is None:
+                    print("Aviso: Não foi possível obter um ID de interação válido do Supabase no fallback")
+                    interaction_id = 0
+            except Exception as supabase_error:
+                print(f"Erro ao salvar interação no Supabase (fallback): {str(supabase_error)}")
+                interaction_id = 0  # Valor padrão em caso de erro
+            
+            # Enviar metadados finais
+            yield {
+                "token_usage": total_tokens,
+                "temperature": temperature,
+                "interaction_id": interaction_id
+            }
+        except Exception as e2:
+            # Em caso de erro total, enviar mensagem de erro como chunk
+            error_message = f"Erro ao processar sua pergunta. Por favor, tente novamente mais tarde."
+            yield error_message
+            
+            # Enviar metadados finais com valores padrão
+            yield {
+                "token_usage": 0,
+                "temperature": temperature,
+                "interaction_id": 0
+            } 

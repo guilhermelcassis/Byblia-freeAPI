@@ -61,14 +61,95 @@ uvicorn app.main:app --reload
 }
 ```
 
-**Resposta**:
-```json
-{
-  "message": "Resposta do modelo de IA",
-  "token_usage": 123,
-  "temperature": 0.7,
-  "interaction_id": 42
+**Resposta (Streaming)**:
+
+O servidor envia eventos usando Server-Sent Events (SSE) com o formato:
+
+```
+data: {"type":"chunk","content":"Parte da resposta..."}
+
+data: {"type":"chunk","content":" continuação..."}
+
+data: {"type":"complete","token_usage":123,"temperature":0.7,"interaction_id":42}
+
+data: [DONE]
+```
+
+**Exemplo de uso no frontend (com JavaScript)**:
+```javascript
+// Função para consumir resposta em streaming
+async function streamChat(prompt) {
+  try {
+    const response = await fetch('https://byblia-freeapi.onrender.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+
+    // Cria um leitor para o stream
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let fullMessage = '';
+    let metadata = null;
+
+    // Processa o stream
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      // Decodifica o chunk
+      const chunk = decoder.decode(value);
+      
+      // Processa cada linha do formato SSE
+      const lines = chunk.split('\n\n');
+      for (const line of lines) {
+        if (!line.trim() || !line.startsWith('data: ')) continue;
+        
+        const data = line.replace('data: ', '');
+        if (data === '[DONE]') continue;
+        
+        try {
+          const parsed = JSON.parse(data);
+          
+          // Se for um chunk de texto, exibe na tela
+          if (parsed.type === 'chunk') {
+            fullMessage += parsed.content;
+            // Atualiza a UI em tempo real
+            document.getElementById('response').innerText = fullMessage;
+          }
+          
+          // Se for a conclusão, armazena os metadados
+          if (parsed.type === 'complete') {
+            metadata = parsed;
+            // Aqui você pode exibir os metadados ou armazená-los para feedback
+            console.log('Metadados:', metadata);
+          }
+        } catch (e) {
+          console.error('Erro ao processar chunk:', e);
+        }
+      }
+    }
+
+    return { message: fullMessage, metadata };
+  } catch (error) {
+    console.error('Erro ao fazer streaming:', error);
+    throw error;
+  }
 }
+
+// Uso
+document.getElementById('chat-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const prompt = document.getElementById('prompt-input').value;
+  
+  // Iniciar o streaming
+  try {
+    await streamChat(prompt);
+    // O texto já estará sendo atualizado na UI durante o streaming
+  } catch (error) {
+    alert('Erro ao processar sua pergunta. Por favor, tente novamente.');
+  }
+});
 ```
 
 ### Feedback

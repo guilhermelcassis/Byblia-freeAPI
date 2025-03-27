@@ -7,7 +7,7 @@ CREATE OR REPLACE FUNCTION public.insert_interaction(
     p_message TEXT,
     p_token_usage INT4,
     p_interaction_number INT4
-) RETURNS INT8  -- Alterado para retornar o ID
+) RETURNS INT8  -- Retorna o ID como um inteiro 
 LANGUAGE plpgsql
 SECURITY DEFINER -- Isso faz com que a função seja executada com os privilégios do criador
 AS $$
@@ -34,6 +34,7 @@ BEGIN
         NULL  -- Inicializa user_feedback como NULL
     ) RETURNING id INTO inserted_id;
     
+    -- Retorna um único valor, não uma lista, para evitar problemas de indexação
     RETURN inserted_id;  -- Retorna o ID inserido
 END;
 $$;

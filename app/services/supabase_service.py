@@ -60,13 +60,27 @@ class InteractionService:
                 }
             ).execute()
             
+            # Debug do resultado recebido do Supabase
+            print(f"Resultado Supabase RPC - Tipo de dados: {type(result.data)}")
+            print(f"Conteúdo do result.data: {result.data}")
+            
             # Obter o ID da interação retornado pela função RPC
             inserted_id = None
             if result.data is not None:
-                inserted_id = result.data[0]  # A função RPC retorna o ID diretamente
+                # Corrigir o problema de "list index out of range"
+                if isinstance(result.data, list) and len(result.data) > 0:
+                    inserted_id = result.data[0]  # A função RPC retorna o ID diretamente
+                    print(f"ID obtido da lista: {inserted_id}")
+                elif isinstance(result.data, (int, float)):
+                    # Caso o ID seja retornado diretamente como número
+                    inserted_id = int(result.data)
+                    print(f"ID convertido de número: {inserted_id}")
+                else:
+                    print(f"Aviso: Resultado inesperado da função RPC: {result.data}")
             
             # Se não conseguir obter o ID através da função RPC, tenta buscar o registro mais recente
             if inserted_id is None:
+                print("Tentando obter ID via consulta ao banco de dados...")
                 try:
                     # Get the most recent interaction to get its ID
                     recent = supabase.table(InteractionService.TABLE_NAME) \
@@ -74,9 +88,12 @@ class InteractionService:
                         .order("timestamp", desc=True) \
                         .limit(1) \
                         .execute()
+                    
+                    print(f"Resultado da consulta recente: {recent.data}")
                         
                     if recent.data and len(recent.data) > 0:
                         inserted_id = recent.data[0].get("id")
+                        print(f"Obtido ID da interação via consulta: {inserted_id}")
                 except Exception as e:
                     print(f"Aviso: Não foi possível obter o ID da interação: {str(e)}")
             
