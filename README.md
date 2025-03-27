@@ -5,7 +5,7 @@ API para interação com modelos de IA e armazenamento de histórico de conversa
 ## Visão Geral
 
 Este projeto implementa uma API RESTful que permite:
-- Interagir com modelos de IA (DeepSeek) para gerar respostas de chat
+- Interagir com modelos de IA (LLM) para gerar respostas de chat
 - Armazenar histórico de interações no Supabase
 - Controlar a temperatura de forma automática no backend
 
@@ -13,7 +13,7 @@ Este projeto implementa uma API RESTful que permite:
 
 - **Backend**: FastAPI (Python)
 - **Banco de Dados**: Supabase (PostgreSQL)
-- **Modelo de IA**: DeepSeek via pydantic-ai
+- **Modelo de IA**: LLM via pydantic-ai
 
 ## Instalação
 
@@ -34,7 +34,7 @@ Este projeto implementa uma API RESTful que permite:
 
 4. Configure as variáveis de ambiente:
    - Crie um arquivo `.env` baseado no `.env.example`
-   - Adicione suas credenciais DeepSeek e Supabase
+   - Adicione suas credenciais LLM e Supabase
 
 ## Executando o Projeto
 
@@ -66,7 +66,28 @@ uvicorn app.main:app --reload
 {
   "message": "Resposta do modelo de IA",
   "token_usage": 123,
-  "temperature": 0.7
+  "temperature": 0.7,
+  "interaction_id": 42
+}
+```
+
+### Feedback
+
+**Endpoint**: `POST /api/feedback`
+
+**Corpo da Requisição**:
+```json
+{
+  "interaction_id": 42,
+  "feedback": true
+}
+```
+
+**Resposta**:
+```json
+{
+  "success": true,
+  "message": "Feedback recebido com sucesso"
 }
 ```
 
@@ -74,6 +95,7 @@ uvicorn app.main:app --reload
 
 - **Temperaturas Automáticas**: O backend gera automaticamente temperaturas entre 0.2 e 1.0 para cada interação
 - **Armazenamento Seguro**: Interações são armazenadas no Supabase com políticas de segurança adequadas
+- **Feedback do Usuário**: Os usuários podem avaliar a qualidade das respostas com feedback positivo ou negativo
 - **Tratamento de Erros**: Implementação robusta para lidar com falhas na API ou no banco de dados
 
 ## Segurança

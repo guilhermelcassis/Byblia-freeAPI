@@ -36,6 +36,7 @@ In your Supabase dashboard:
 | message           | text      |               | No      | No          |
 | token_usage       | int4      |               | No      | No          |
 | interaction_number| int4      |               | No      | No          |
+| user_feedback     | boolean   | NULL          | No      | Yes         |
 
 ## 4. Configurando as Políticas de Segurança (RLS)
 

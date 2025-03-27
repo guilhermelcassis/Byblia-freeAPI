@@ -11,15 +11,15 @@ from app.services.supabase_service import InteractionService
 load_dotenv()
 
 # Configurações padrão para o agente
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = os.getenv('COUNSELOR_MODEL')
 MIN_TEMPERATURE = 0.2
 MAX_TEMPERATURE = 1.0
 
 def get_api_key():
     """Recupera a chave de API do ambiente."""
-    api_key = os.getenv('DEEPSEEK_API_KEY')
+    api_key = os.getenv('LLM_API_KEY')
     if not api_key:
-        raise ValueError("DEEPSEEK_API_KEY não encontrada nas variáveis de ambiente")
+        raise ValueError("LLM_API_KEY não encontrada nas variáveis de ambiente")
     return api_key
 
 def setup_agent(model_name=DEFAULT_MODEL):
@@ -154,9 +154,13 @@ async def process_chat_request(prompt: str, temperature: float = None):
     if not result.get("success", False):
         print(f"Aviso: Não foi possível salvar a interação. Erro: {result.get('error', 'desconhecido')}")
     
+    # Obter o ID da interação
+    interaction_id = result.get("interaction_id")
+    
     # Retornar resposta e metadados
     return {
         "message": message,
         "token_usage": token_usage,
-        "temperature": used_temperature
+        "temperature": used_temperature,
+        "interaction_id": interaction_id
     } 

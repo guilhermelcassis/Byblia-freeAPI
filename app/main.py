@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.endpoints import chat
+from app.api.endpoints import chat, feedback
 import os
 from dotenv import load_dotenv
 
@@ -15,6 +15,7 @@ app = FastAPI(
 
 # Incluir rotas da API
 app.include_router(chat.router, prefix="/api", tags=["chat"])
+app.include_router(feedback.router, prefix="/api", tags=["feedback"])
 
 @app.get("/")
 async def root():

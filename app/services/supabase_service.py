@@ -60,14 +60,74 @@ class InteractionService:
                 }
             ).execute()
             
-            return {"success": True, "interaction_number": interaction_number}
+            # Obter o ID da interação retornado pela função RPC
+            inserted_id = None
+            if result.data is not None:
+                inserted_id = result.data[0]  # A função RPC retorna o ID diretamente
+            
+            # Se não conseguir obter o ID através da função RPC, tenta buscar o registro mais recente
+            if inserted_id is None:
+                try:
+                    # Get the most recent interaction to get its ID
+                    recent = supabase.table(InteractionService.TABLE_NAME) \
+                        .select("id") \
+                        .order("timestamp", desc=True) \
+                        .limit(1) \
+                        .execute()
+                        
+                    if recent.data and len(recent.data) > 0:
+                        inserted_id = recent.data[0].get("id")
+                except Exception as e:
+                    print(f"Aviso: Não foi possível obter o ID da interação: {str(e)}")
+            
+            return {
+                "success": True, 
+                "interaction_number": interaction_number,
+                "interaction_id": inserted_id
+            }
         except Exception as e:
             print(f"Erro ao salvar no Supabase: {str(e)}")
             # Retornar um resultado dummy para não quebrar o fluxo
             return {
                 "success": False, 
                 "error": str(e),
-                "interaction_number": 0
+                "interaction_number": 0,
+                "interaction_id": None
+            }
+    
+    @staticmethod
+    async def update_feedback(interaction_id: int, feedback: bool) -> Dict[str, Any]:
+        """
+        Updates an interaction with user feedback
+        
+        Args:
+            interaction_id: The ID of the interaction to update
+            feedback: True for positive feedback, False for negative
+            
+        Returns:
+            Result of the operation
+        """
+        try:
+            supabase = get_supabase()
+            
+            # Call the RPC function to update feedback
+            result = supabase.rpc(
+                "update_interaction_feedback",
+                {
+                    "p_interaction_id": interaction_id,
+                    "p_user_feedback": feedback
+                }
+            ).execute()
+            
+            return {
+                "success": True,
+                "message": "Feedback atualizado com sucesso"
+            }
+        except Exception as e:
+            print(f"Erro ao atualizar feedback: {str(e)}")
+            return {
+                "success": False,
+                "message": f"Erro ao atualizar feedback: {str(e)}"
             }
             
     @staticmethod
