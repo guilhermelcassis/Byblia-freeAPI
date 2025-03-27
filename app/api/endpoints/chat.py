@@ -59,12 +59,10 @@ async def real_time_stream(prompt: str):
         
         # Enviar comentários iniciais para forçar o início do stream
         logger.info("[STREAM_DEBUG] Enviando comentário inicial")
-        yield ": This is a streaming response from the API. Chunks will be sent one by one.\n\n"
         await asyncio.sleep(0.05)
         
         # Enviar evento de heartbeat para manter a conexão aberta
         logger.info("[STREAM_DEBUG] Enviando heartbeat")
-        yield ": heartbeat\n\n"
         await asyncio.sleep(0.05)
         
         # Enviar evento de início
