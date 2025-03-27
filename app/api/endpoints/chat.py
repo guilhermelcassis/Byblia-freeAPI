@@ -16,7 +16,7 @@ router = APIRouter()
 async def chat(request: ChatRequest, req: Request):
     """
     Endpoint para processar perguntas e gerar respostas usando o agente IA.
-    Todas as respostas são enviadas como streaming caractere por caractere.
+    Otimizado para streaming de alta velocidade similar a sites comerciais de LLM.
     
     Args:
         request: Contém o prompt do usuário
@@ -25,7 +25,7 @@ async def chat(request: ChatRequest, req: Request):
         StreamingResponse: Resposta gerada em formato de streaming
     """
     try:
-        # Configuração agressiva para garantir streaming em tempo real
+        # Configuração otimizada para streaming de alta performance
         headers = {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache, no-transform",
@@ -35,7 +35,7 @@ async def chat(request: ChatRequest, req: Request):
         }
         
         return StreamingResponse(
-            content=character_level_stream(request.prompt),
+            content=optimized_token_stream(request.prompt),
             media_type="text/event-stream",
             headers=headers
         )
@@ -43,32 +43,28 @@ async def chat(request: ChatRequest, req: Request):
         logger.error(f"Erro no endpoint de chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao processar solicitação: {str(e)}")
 
-async def character_level_stream(prompt: str):
+async def optimized_token_stream(prompt: str):
     """
-    Gera um stream de eventos em tempo real caractere por caractere.
-    Cada letra é transmitida individualmente para uma experiência de digitação.
+    Gera um stream de eventos em tempo real usando tokens nativos do modelo.
+    Otimizado para velocidade máxima sem delays artificiais.
     
     Args:
         prompt: A pergunta do usuário
         
     Yields:
-        Caracteres individuais no formato SSE (Server-Sent Events)
+        Tokens no formato SSE (Server-Sent Events)
     """
     try:
         prompt_preview = prompt[:30] + "..." if len(prompt) > 30 else prompt
         logger.info(f"[CHAT] Iniciando stream para: '{prompt_preview}'")
         char_count = 0
+        buffer = ""
+        max_buffer_size = 3  # Tamanho máximo de buffer para evitar atrasos perceptíveis
         
-        # Enviar eventos iniciais
-        yield ": Iniciando resposta caractere por caractere\n\n"
-        await asyncio.sleep(0.05)
+        # Apenas um pequeno delay inicial para iniciar o streaming
+        await asyncio.sleep(0.01)
         
-        # Enviar evento de início
-        yield f"data: {json.dumps({'type': 'start'})}\n\n"
-        await asyncio.sleep(0.05)
-        
-        # Iniciar o streaming caractere por caractere
-        logger.info("[CHAT] Transmitindo caracteres...")
+        logger.info("[CHAT] Transmitindo tokens...")
         temperature = None  # Será gerada aleatoriamente
         
         try:
@@ -77,24 +73,33 @@ async def character_level_stream(prompt: str):
             
             async for item in generate_streaming_response(prompt, temperature):
                 if isinstance(item, str):
-                    # É um caractere individual
-                    char_count += 1
+                    # Recebeu um token do modelo
+                    buffer += item
+                    char_count += len(item)
                     
-                    # Criar um chunk contendo apenas este caractere
-                    chunk = StreamChunk(type="chunk", content=item)
-                    chunk_json = json.dumps(chunk.dict())
-                    
-                    # Log ocasional para não sobrecarregar o console
-                    current_time = time.time()
-                    if current_time - last_log_time > 3.0:  # Log a cada 3 segundos
-                        logger.info(f"[CHAT] Transmitidos {char_count} caracteres até agora")
-                        last_log_time = current_time
-                    
-                    # Enviar cada caractere imediatamente como SSE
-                    yield f"data: {chunk_json}\n\n"
-                    
-                    # Não precisamos de delay adicional aqui, o agente já aplica delay
+                    # Enviar imediatamente se o buffer atingir o tamanho alvo
+                    # ou se o token contiver certas características (espaço, pontuação)
+                    if len(buffer) >= max_buffer_size or any(c in buffer for c in ' .,!?;\n'):
+                        chunk = StreamChunk(type="chunk", content=buffer)
+                        chunk_json = json.dumps(chunk.dict())
+                        buffer = ""  # Limpar o buffer
+                        
+                        # Log ocasional
+                        current_time = time.time()
+                        if current_time - last_log_time > 3.0:
+                            logger.info(f"[CHAT] Transmitidos {char_count} caracteres até agora")
+                            last_log_time = current_time
+                        
+                        # Enviar sem delay
+                        yield f"data: {chunk_json}\n\n"
                 else:
+                    # Enviar qualquer texto restante no buffer
+                    if buffer:
+                        chunk = StreamChunk(type="chunk", content=buffer)
+                        chunk_json = json.dumps(chunk.dict())
+                        yield f"data: {chunk_json}\n\n"
+                        buffer = ""
+                    
                     # É o resultado final com metadados
                     logger.info(f"[CHAT] Enviando metadados finais")
                     
@@ -110,7 +115,6 @@ async def character_level_stream(prompt: str):
                         interaction_id=interaction_id
                     )
                     yield f"data: {json.dumps(complete.dict())}\n\n"
-                    await asyncio.sleep(0.05)
         except Exception as stream_error:
             logger.error(f"[CHAT] Erro durante streaming: {str(stream_error)}")
             error_chunk = StreamChunk(type="chunk", content=f"\n\nDesculpe, ocorreu um erro. Por favor, tente novamente.")

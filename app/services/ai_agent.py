@@ -139,10 +139,11 @@ async def generate_response(prompt, temperature=None):
 
 async def generate_streaming_response(prompt: str, temperature: Optional[float] = None) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
     """
-    Gera a resposta do modelo em modo streaming, enviando cada token à medida que é gerado.
+    Gera a resposta do modelo em modo streaming, otimizado para velocidade.
     
-    Esta função transmite literalmente cada token individual recebido do modelo imediatamente
-    para o cliente, criando uma experiência de streaming muito mais refinada e fluida.
+    Esta função transmite os tokens diretamente do modelo para o cliente 
+    sem delays artificiais, oferecendo uma experiência similar a sites de LLM
+    como OpenAI e DeepSeek.
     
     Args:
         prompt: A pergunta do usuário
@@ -150,7 +151,7 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
         
     Yields:
         União de:
-            - str: Cada token individual do texto gerado 
+            - str: Tokens de texto gerado pelo modelo 
             - Dict: Metadados finais quando a geração é concluída
     """
     full_message = ""
@@ -172,25 +173,22 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
         
         # Gerar resposta em modo streaming
         try:
-            logger.info(f"[AGENT] Iniciando streaming com temperatura {temperature}")
+            logger.info(f"[AGENT] streaming com temperatura {temperature}")
             
             async with agent.run_stream(prompt) as stream:
-                # Utilizar stream_text com delta=True para obter tokens individuais
+                # Utilizar stream_text para obter tokens diretamente do modelo
                 async for chunk in stream.stream_text(delta=True):
-                    # Cada chunk do modelo pode ser vários caracteres - vamos quebrar por caractere
                     if chunk:
-                        # Processar cada caractere individualmente para streaming letra por letra
-                        for char in chunk:
-                            token_count += 1
-                            full_message += char
-                            
-                            # Enviar cada caractere imediatamente, sem buffering
-                            yield char
-                            
-                            # Delay mínimo para criar uma experiência fluida de digitação
-                            await asyncio.sleep(0.02)  # Ajustado para simular digitação natural
+                        token_count += len(chunk)
+                        full_message += chunk
+                        
+                        # Enviar o token diretamente sem processamento adicional
+                        yield chunk
+                        
+                        # Sem delay intencional - velocidade máxima
+                        # similar às interfaces da OpenAI/DeepSeek
             
-            logger.info(f"[AGENT] Streaming concluído: {token_count} caracteres em {time.time() - start_time:.2f}s")
+            logger.info(f"[AGENT] Streaming concluído: {len(full_message)} caracteres em {time.time() - start_time:.2f}s")
             
         except Exception as e:
             logger.error(f"[AGENT] Erro durante streaming: {str(e)}")
@@ -208,11 +206,14 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
                 else:
                     full_message = str(result)
                     
-                # Simular streaming mesmo no fallback, caractere por caractere
-                for char in full_message:
-                    token_count += 1
-                    yield char
-                    await asyncio.sleep(0.02)
+                # Simular streaming no fallback, com chunks menores
+                # para melhor imitar o comportamento real de LLMs
+                chunk_size = 5  # Reduzido para 5 caracteres para melhor experiência
+                for i in range(0, len(full_message), chunk_size):
+                    text_chunk = full_message[i:i+chunk_size]
+                    token_count += len(text_chunk)
+                    yield text_chunk
+                    await asyncio.sleep(0.001)  # Delay mínimo para evitar sobrecarga
             except Exception as e2:
                 logger.error(f"[AGENT] Erro no fallback: {str(e2)}")
                 raise e
