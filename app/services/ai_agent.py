@@ -6,6 +6,7 @@ import os
 import random
 from dotenv import load_dotenv
 from app.services.supabase_service import InteractionService
+import asyncio
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -153,20 +154,64 @@ async def generate_streaming_response(prompt: str, temperature=None):
     
     # Variáveis para armazenar informações
     full_message = ""
+    buffer = ""  # Buffer para acumular pequenos chunks
+    min_chunk_size = 25  # Tamanho mínimo preferível para chunks
+    chunk_count = 0  # Para debug
+    raw_chunk_count = 0  # Para contar chunks recebidos do modelo
+    
+    print(f"[AGENT_DEBUG] Iniciando geração com temperatura: {temperature}")
     
     try:
         # Usar streaming para gerar a resposta
+        print(f"[AGENT_DEBUG] Inicializando stream para prompt: '{prompt[:50]}...'")
         async with agent.run_stream(prompt) as result:
             async for chunk in result.stream_text(delta=True):
+                # Contar chunks recebidos do modelo
+                raw_chunk_count += 1
+                if raw_chunk_count % 10 == 0:
+                    print(f"[AGENT_DEBUG] Recebidos {raw_chunk_count} chunks brutos do modelo até agora")
+                
                 # Adicionar chunk à mensagem completa
                 full_message += chunk
-                # Enviar chunk diretamente para o cliente
-                yield chunk
+                buffer += chunk
+                
+                # Determinar se devemos enviar o buffer agora
+                should_send = (
+                    len(buffer) >= min_chunk_size or 
+                    '\n' in buffer or 
+                    '.' in buffer or 
+                    ',' in buffer or 
+                    '?' in buffer or 
+                    '!' in buffer or
+                    ':' in buffer
+                )
+                
+                if should_send:
+                    # Contar chunks enviados
+                    chunk_count += 1
+                    print(f"[AGENT_DEBUG] Enviando chunk #{chunk_count}: '{buffer[:30]}...' ({len(buffer)} caracteres)")
+                    
+                    # Enviar buffer como um chunk
+                    yield buffer
+                    # Limpar o buffer
+                    buffer = ""
+                    # Pausa para garantir que o frontend processe este chunk
+                    await asyncio.sleep(0.1)
+            
+            # Enviar qualquer texto restante no buffer
+            if buffer:
+                chunk_count += 1
+                print(f"[AGENT_DEBUG] Enviando chunk final #{chunk_count}: '{buffer[:30]}...' ({len(buffer)} caracteres)")
+                yield buffer
+                await asyncio.sleep(0.1)
+                
+        print(f"[AGENT_DEBUG] Geração completa. Enviados {chunk_count} chunks de {raw_chunk_count} chunks recebidos do modelo")
                 
         # Extrair informações de uso
         usage_data = result.usage()
         usage_dict = to_jsonable_python(usage_data)
         total_tokens = usage_dict.get('total_tokens', 0)
+        print(f"[AGENT_DEBUG] Tokens utilizados: {total_tokens}")
         
         # Salvar no Supabase
         try:
@@ -187,6 +232,9 @@ async def generate_streaming_response(prompt: str, temperature=None):
         except Exception as supabase_error:
             print(f"Erro ao salvar interação no Supabase: {str(supabase_error)}")
             interaction_id = 0  # Valor padrão em caso de erro
+        
+        # Pausar brevemente antes de enviar os metadados
+        await asyncio.sleep(0.2)
         
         # Enviar metadados finais
         yield {
