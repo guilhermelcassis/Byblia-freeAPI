@@ -4,7 +4,7 @@ python-dotenv>=1.0.0
 supabase>=2.0.0
 pydantic>=2.0.0
 pydantic-ai>=0.0.46
-deepseek-ai>=0.1.0  # Pacote correto para integração com Deepseek AI
+deepseek-ai==0.0.1  # Única versão disponível atualmente
 python-multipart>=0.0.6
 httpx>=0.24.0  # Para requisições HTTP assíncronas
 typing-extensions>=4.0.0
