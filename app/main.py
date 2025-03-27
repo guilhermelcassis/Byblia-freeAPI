@@ -64,14 +64,21 @@ if os.getenv("ENVIRONMENT", "production").lower() == "development":
         "http://127.0.0.1:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ])
+
+# Configuração CORS mais permissiva para debug temporário
+if os.getenv("CORS_DEBUG", "false").lower() == "true":
+    allowed_origins = ["*"]  # Permitir todas as origens temporariamente
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    max_age=86400,  # Cache preflight por 24 horas
 )
 
 # Incluir rotas da API

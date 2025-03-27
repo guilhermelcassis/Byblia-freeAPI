@@ -71,27 +71,45 @@ def verify_referer(
     Raises:
         HTTPException: Se o referer não estiver na lista de domínios permitidos
     """
+    # Em ambiente de produção, podemos desativar temporariamente para debug
+    # Remova essa linha quando tudo estiver funcionando adequadamente
+    production_debug = os.getenv("DISABLE_REFERER_CHECK", "false").lower() == "true"
+    if production_debug:
+        return None
+        
     if allowed_domains is None:
         allowed_domains = ["byblia.vercel.app"]
         
-    # Em ambiente de desenvolvimento, permitir localhost
-    if os.getenv("ENVIRONMENT", "production").lower() == "development":
+    # Em ambiente de desenvolvimento, permitir localhost e ausência de referer
+    is_dev = os.getenv("ENVIRONMENT", "production").lower() == "development"
+    if is_dev:
         allowed_domains.extend([
             "localhost:3000",
             "127.0.0.1:3000",
             "localhost:5173",
             "127.0.0.1:5173",
+            "localhost:8000", # Porta do FastAPI
+            "127.0.0.1:8000",
         ])
+        # Em dev, permitir ausência de referer para testes com ferramentas como curl, Postman, etc.
+        if request.headers.get("referer") is None:
+            return None
         
     # Obter o cabeçalho referer (de onde veio a requisição)
     referer = request.headers.get("referer")
     
-    # Se não houver referer, bloquear a requisição
+    # Se não houver referer em produção, verificar se é uma solicitação OPTIONS (preflight CORS)
     if not referer:
-        raise HTTPException(
-            status_code=403,
-            detail="Acesso não autorizado: origem desconhecida"
-        )
+        if request.method == "OPTIONS":
+            return None
+        
+        # Em produção, ser mais rigoroso
+        if not is_dev:
+            raise HTTPException(
+                status_code=403,
+                detail="Acesso não autorizado: origem desconhecida"
+            )
+        return None
     
     # Verificar se o referer contém um dos domínios permitidos
     if not any(domain in referer for domain in allowed_domains):

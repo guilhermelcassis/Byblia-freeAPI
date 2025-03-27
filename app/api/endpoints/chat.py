@@ -32,6 +32,13 @@ async def chat(
         StreamingResponse: Resposta gerada em formato de streaming
     """
     try:
+        # Verificar se o prompt está vazio ou tem apenas espaços
+        if not request.is_valid_for_processing():
+            raise HTTPException(
+                status_code=400,
+                detail="O prompt está vazio. Por favor, digite uma pergunta."
+            )
+            
         # Configuração otimizada para streaming de alta performance
         headers = {
             "Content-Type": "text/event-stream",
@@ -46,6 +53,9 @@ async def chat(
             media_type="text/event-stream",
             headers=headers
         )
+    except HTTPException:
+        # Re-lançar exceções HTTP já formadas
+        raise
     except Exception as e:
         logger.error(f"Erro no endpoint de chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao processar solicitação: {str(e)}")
