@@ -7,6 +7,12 @@ import random
 from dotenv import load_dotenv
 from app.services.supabase_service import InteractionService
 import asyncio
+from typing import AsyncGenerator, Union, Dict, Any, Optional
+import time
+import logging
+
+# Configuração do logger
+logger = logging.getLogger(__name__)
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -131,183 +137,138 @@ async def generate_response(prompt, temperature=None):
 # A função process_chat_request foi removida pois se tornou obsoleta.
 # Utilize generate_streaming_response para todas as interações com a API.
 
-async def generate_streaming_response(prompt: str, temperature=None):
+async def generate_streaming_response(prompt: str, temperature: Optional[float] = None) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
     """
-    Gera uma resposta do modelo em streaming, enviando cada parte para o cliente em tempo real.
+    Gera a resposta do modelo em modo streaming, enviando cada token à medida que é gerado.
+    
+    Esta função transmite literalmente cada token individual recebido do modelo imediatamente
+    para o cliente, criando uma experiência de streaming muito mais refinada e fluida.
     
     Args:
-        prompt: Pergunta do usuário
-        temperature: Temperatura usada (se None, uma nova será gerada)
+        prompt: A pergunta do usuário
+        temperature: A temperatura a ser utilizada pelo modelo (None gera uma aleatória)
         
     Yields:
-        Chunks de texto ou dicionário final com metadados
+        União de:
+            - str: Cada token individual do texto gerado 
+            - Dict: Metadados finais quando a geração é concluída
     """
-    # Configurar o agente
-    agent, model = setup_agent()
-    
-    # Se a temperatura não for fornecida, gerar uma nova
-    if temperature is None:
-        temperature = get_random_temperature()
-    
-    # Atualizar a temperatura do agente para esta pergunta
-    agent.model_settings['temperature'] = temperature
-    
-    # Variáveis para armazenar informações
     full_message = ""
-    buffer = ""  # Buffer para acumular pequenos chunks
-    min_chunk_size = 25  # Tamanho mínimo preferível para chunks
-    chunk_count = 0  # Para debug
-    raw_chunk_count = 0  # Para contar chunks recebidos do modelo
-    
-    print(f"[AGENT_DEBUG] Iniciando geração com temperatura: {temperature}")
+    token_count = 0
+    start_time = time.time()
+    agent = None
+    new_agent = None
     
     try:
-        # Usar streaming para gerar a resposta
-        print(f"[AGENT_DEBUG] Inicializando stream para prompt: '{prompt[:50]}...'")
-        async with agent.run_stream(prompt) as result:
-            async for chunk in result.stream_text(delta=True):
-                # Contar chunks recebidos do modelo
-                raw_chunk_count += 1
-                if raw_chunk_count % 10 == 0:
-                    print(f"[AGENT_DEBUG] Recebidos {raw_chunk_count} chunks brutos do modelo até agora")
-                
-                # Adicionar chunk à mensagem completa
-                full_message += chunk
-                buffer += chunk
-                
-                # Determinar se devemos enviar o buffer agora
-                should_send = (
-                    len(buffer) >= min_chunk_size or 
-                    '\n' in buffer or 
-                    '.' in buffer or 
-                    ',' in buffer or 
-                    '?' in buffer or 
-                    '!' in buffer or
-                    ':' in buffer
-                )
-                
-                if should_send:
-                    # Contar chunks enviados
-                    chunk_count += 1
-                    print(f"[AGENT_DEBUG] Enviando chunk #{chunk_count}: '{buffer[:30]}...' ({len(buffer)} caracteres)")
-                    
-                    # Enviar buffer como um chunk
-                    yield buffer
-                    # Limpar o buffer
-                    buffer = ""
-                    # Pausa para garantir que o frontend processe este chunk
-                    await asyncio.sleep(0.1)
-            
-            # Enviar qualquer texto restante no buffer
-            if buffer:
-                chunk_count += 1
-                print(f"[AGENT_DEBUG] Enviando chunk final #{chunk_count}: '{buffer[:30]}...' ({len(buffer)} caracteres)")
-                yield buffer
-                await asyncio.sleep(0.1)
-                
-        print(f"[AGENT_DEBUG] Geração completa. Enviados {chunk_count} chunks de {raw_chunk_count} chunks recebidos do modelo")
-                
-        # Extrair informações de uso
-        usage_data = result.usage()
-        usage_dict = to_jsonable_python(usage_data)
-        total_tokens = usage_dict.get('total_tokens', 0)
-        print(f"[AGENT_DEBUG] Tokens utilizados: {total_tokens}")
+        # Inicializar o agente
+        agent, model = setup_agent()
+        new_agent, new_model = setup_agent()
         
-        # Salvar no Supabase
+        # Definir a temperatura
+        if temperature is None:
+            temperature = get_random_temperature()
+        
+        agent.model_settings['temperature'] = temperature
+        
+        # Gerar resposta em modo streaming
         try:
-            supabase_result = await InteractionService.save_interaction(
-                user_prompt=prompt,
-                model=DEFAULT_MODEL,
-                temperature=temperature,
-                message=full_message,
-                token_usage=total_tokens
-            )
+            logger.info(f"[AGENT] Iniciando streaming com temperatura {temperature}")
             
-            # Obter o ID da interação
-            interaction_id = supabase_result.get("interaction_id")
-            # Garantir que interaction_id seja sempre um inteiro válido
-            if interaction_id is None:
-                print("Aviso: Não foi possível obter um ID de interação válido do Supabase")
-                interaction_id = 0
-        except Exception as supabase_error:
-            print(f"Erro ao salvar interação no Supabase: {str(supabase_error)}")
-            interaction_id = 0  # Valor padrão em caso de erro
-        
-        # Pausar brevemente antes de enviar os metadados
-        await asyncio.sleep(0.2)
-        
-        # Enviar metadados finais
-        yield {
-            "token_usage": total_tokens,
-            "temperature": temperature,
-            "interaction_id": interaction_id
-        }
-    except Exception as e:
-        # Log do erro
-        print(f"Erro ao gerar resposta em streaming: {str(e)}")
-        
-        # Tentar um fallback sem streaming
-        try:
-            # Resetar o agente com a mesma temperatura
-            agent.model_settings['temperature'] = temperature
+            async with agent.run_stream(prompt) as stream:
+                # Utilizar stream_text com delta=True para obter tokens individuais
+                async for chunk in stream.stream_text(delta=True):
+                    # Cada chunk do modelo pode ser vários caracteres - vamos quebrar por caractere
+                    if chunk:
+                        # Processar cada caractere individualmente para streaming letra por letra
+                        for char in chunk:
+                            token_count += 1
+                            full_message += char
+                            
+                            # Enviar cada caractere imediatamente, sem buffering
+                            yield char
+                            
+                            # Delay mínimo para criar uma experiência fluida de digitação
+                            await asyncio.sleep(0.02)  # Ajustado para simular digitação natural
             
-            # Usar o método não-streaming como fallback
-            result = await agent.run(prompt)
+            logger.info(f"[AGENT] Streaming concluído: {token_count} caracteres em {time.time() - start_time:.2f}s")
             
-            # Tente obter a resposta de diferentes maneiras possíveis
-            if hasattr(result, 'content'):
-                full_message = result.content
-            elif hasattr(result, 'message'):
-                full_message = result.message
-            else:
-                full_message = str(result)
-                
-            # Enviar a mensagem completa como um único chunk
-            yield full_message
-            
-            # Tentar obter informações de uso
-            total_tokens = 0
+        except Exception as e:
+            logger.error(f"[AGENT] Erro durante streaming: {str(e)}")
+            # Tentar fallback com temperatura diferente
             try:
-                if hasattr(result, 'usage'):
-                    usage_dict = to_jsonable_python(result.usage)
-                    total_tokens = usage_dict.get('total_tokens', 0)
-            except:
+                logger.info("[AGENT] Tentando fallback sem streaming")
+                new_agent.model_settings['temperature'] = 0.1
+                result = await new_agent.run(prompt)
+                
+                # Extrair a resposta do resultado
+                if hasattr(result, 'content'):
+                    full_message = result.content
+                elif hasattr(result, 'message'):
+                    full_message = result.message
+                else:
+                    full_message = str(result)
+                    
+                # Simular streaming mesmo no fallback, caractere por caractere
+                for char in full_message:
+                    token_count += 1
+                    yield char
+                    await asyncio.sleep(0.02)
+            except Exception as e2:
+                logger.error(f"[AGENT] Erro no fallback: {str(e2)}")
+                raise e
+        
+        # Extrair dados de uso
+        try:
+            token_usage = 0
+            
+            # Tentar obter tokens da sessão de streaming
+            try:
+                if 'stream' in locals() and stream is not None:
+                    usage_data = stream.usage()
+                    if usage_data:
+                        usage_dict = to_jsonable_python(usage_data)
+                        token_usage = usage_dict.get('total_tokens', 0)
+                        logger.info(f"[AGENT] Tokens usados: {token_usage}")
+            except Exception as e_usage:
+                # Silenciar este erro, apenas registrar que não conseguimos obter
                 pass
                 
-            # Salvar no Supabase
+            # Se não conseguiu via stream, usar estimativa baseada no comprimento
+            if token_usage == 0:
+                # Estimativa aproximada: ~4 caracteres por token para línguas latinas
+                token_usage = len(full_message) // 4
+                logger.info(f"[AGENT] Usando estimativa de tokens: {token_usage}")
+                    
+            # Salvar interação no Supabase
+            interaction_id = None
             try:
-                supabase_result = await InteractionService.save_interaction(
+                result = await InteractionService.save_interaction(
                     user_prompt=prompt,
                     model=DEFAULT_MODEL,
                     temperature=temperature,
                     message=full_message,
-                    token_usage=total_tokens
+                    token_usage=token_usage
                 )
-                
-                # Obter o ID da interação
-                interaction_id = supabase_result.get("interaction_id")
-                # Garantir que interaction_id seja sempre um inteiro válido
-                if interaction_id is None:
-                    print("Aviso: Não foi possível obter um ID de interação válido do Supabase no fallback")
-                    interaction_id = 0
-            except Exception as supabase_error:
-                print(f"Erro ao salvar interação no Supabase (fallback): {str(supabase_error)}")
-                interaction_id = 0  # Valor padrão em caso de erro
+                interaction_id = result.get("interaction_id")
+            except Exception as e:
+                logger.error(f"[AGENT] Erro ao salvar interação: {str(e)}")
             
-            # Enviar metadados finais
-            yield {
-                "token_usage": total_tokens,
+            # Enviar metadados
+            metadata = {
+                "token_usage": token_usage,
                 "temperature": temperature,
                 "interaction_id": interaction_id
             }
-        except Exception as e2:
-            # Em caso de erro total, enviar mensagem de erro como chunk
-            error_message = f"Erro ao processar sua pergunta. Por favor, tente novamente mais tarde."
-            yield error_message
             
-            # Enviar metadados finais com valores padrão
-            yield {
-                "token_usage": 0,
-                "temperature": temperature,
-                "interaction_id": 0
-            } 
+            logger.info(f"[AGENT] Resposta completa: {token_usage} tokens, ID: {interaction_id}")
+            
+            # Enviar metadados no final
+            yield metadata
+            
+        except Exception as e:
+            logger.error(f"[AGENT] Erro nos metadados: {str(e)}")
+            yield {"token_usage": 0, "temperature": temperature, "interaction_id": None}
+    
+    except Exception as e:
+        logger.error(f"[AGENT] Erro crítico: {str(e)}")
+        yield {"token_usage": 0, "temperature": temperature, "interaction_id": None} 

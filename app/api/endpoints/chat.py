@@ -16,7 +16,7 @@ router = APIRouter()
 async def chat(request: ChatRequest, req: Request):
     """
     Endpoint para processar perguntas e gerar respostas usando o agente IA.
-    Todas as respostas são enviadas como streaming.
+    Todas as respostas são enviadas como streaming caractere por caractere.
     
     Args:
         request: Contém o prompt do usuário
@@ -25,7 +25,7 @@ async def chat(request: ChatRequest, req: Request):
         StreamingResponse: Resposta gerada em formato de streaming
     """
     try:
-        # Configuração agressiva para garantir streaming
+        # Configuração agressiva para garantir streaming em tempo real
         headers = {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache, no-transform",
@@ -35,7 +35,7 @@ async def chat(request: ChatRequest, req: Request):
         }
         
         return StreamingResponse(
-            content=real_time_stream(request.prompt),
+            content=character_level_stream(request.prompt),
             media_type="text/event-stream",
             headers=headers
         )
@@ -43,81 +43,84 @@ async def chat(request: ChatRequest, req: Request):
         logger.error(f"Erro no endpoint de chat: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao processar solicitação: {str(e)}")
 
-async def real_time_stream(prompt: str):
+async def character_level_stream(prompt: str):
     """
-    Gera um stream de eventos em tempo real com controle fino de fluxo.
+    Gera um stream de eventos em tempo real caractere por caractere.
+    Cada letra é transmitida individualmente para uma experiência de digitação.
     
     Args:
         prompt: A pergunta do usuário
         
     Yields:
-        Chunks de texto no formato SSE (Server-Sent Events)
+        Caracteres individuais no formato SSE (Server-Sent Events)
     """
     try:
-        logger.info(f"[STREAM_DEBUG] Iniciando stream para prompt: '{prompt[:50]}...'")
-        chunk_count = 0
+        prompt_preview = prompt[:30] + "..." if len(prompt) > 30 else prompt
+        logger.info(f"[CHAT] Iniciando stream para: '{prompt_preview}'")
+        char_count = 0
         
-        # Enviar comentários iniciais para forçar o início do stream
-        logger.info("[STREAM_DEBUG] Enviando comentário inicial")
-        await asyncio.sleep(0.05)
-        
-        # Enviar evento de heartbeat para manter a conexão aberta
-        logger.info("[STREAM_DEBUG] Enviando heartbeat")
+        # Enviar eventos iniciais
+        yield ": Iniciando resposta caractere por caractere\n\n"
         await asyncio.sleep(0.05)
         
         # Enviar evento de início
-        logger.info("[STREAM_DEBUG] Enviando evento de início")
-        start_event = json.dumps({"type": "start"})
-        yield f"data: {start_event}\n\n"
-        await asyncio.sleep(0.1)
+        yield f"data: {json.dumps({'type': 'start'})}\n\n"
+        await asyncio.sleep(0.05)
         
-        # Enviar mensagem de inicialização para testar a conexão
-        logger.info("[STREAM_DEBUG] Enviando chunk de inicialização")
-        init_chunk = StreamChunk(type="chunk", content="")
-        yield f"data: {json.dumps(init_chunk.dict())}\n\n"
-        await asyncio.sleep(0.2)  # Delay maior para este primeiro chunk
-        
-        # Iniciar o streaming
-        logger.info("[STREAM_DEBUG] Começando a transmissão real do conteúdo")
+        # Iniciar o streaming caractere por caractere
+        logger.info("[CHAT] Transmitindo caracteres...")
         temperature = None  # Será gerada aleatoriamente
         
-        async for item in generate_streaming_response(prompt, temperature):
-            if isinstance(item, str):
-                # É um chunk de texto
-                chunk = StreamChunk(type="chunk", content=item)
-                chunk_json = json.dumps(chunk.dict())
-                
-                # Log do chunk para debug
-                chunk_count += 1
-                logger.info(f"[STREAM_DEBUG] Enviando chunk #{chunk_count}: '{item[:30]}...' ({len(item)} caracteres)")
-                
-                # Forçar cada chunk como um evento SSE separado
-                yield f"data: {chunk_json}\n\n"
-                # Delay para garantir que o navegador processe cada chunk separadamente
-                await asyncio.sleep(0.1)
-            else:
-                # É o resultado final com metadados
-                logger.info(f"[STREAM_DEBUG] Enviando metadados finais: {item}")
-                
-                # Garantir que interaction_id seja sempre um inteiro válido
-                interaction_id = item.get("interaction_id", 0)
-                if interaction_id is None:
-                    interaction_id = 0
-                
-                complete = StreamComplete(
-                    type="complete",
-                    token_usage=item.get("token_usage", 0),
-                    temperature=item.get("temperature", 0),
-                    interaction_id=interaction_id
-                )
-                yield f"data: {json.dumps(complete.dict())}\n\n"
-                await asyncio.sleep(0.1)
+        try:
+            # Contador para log ocasional
+            last_log_time = time.time()
+            
+            async for item in generate_streaming_response(prompt, temperature):
+                if isinstance(item, str):
+                    # É um caractere individual
+                    char_count += 1
+                    
+                    # Criar um chunk contendo apenas este caractere
+                    chunk = StreamChunk(type="chunk", content=item)
+                    chunk_json = json.dumps(chunk.dict())
+                    
+                    # Log ocasional para não sobrecarregar o console
+                    current_time = time.time()
+                    if current_time - last_log_time > 3.0:  # Log a cada 3 segundos
+                        logger.info(f"[CHAT] Transmitidos {char_count} caracteres até agora")
+                        last_log_time = current_time
+                    
+                    # Enviar cada caractere imediatamente como SSE
+                    yield f"data: {chunk_json}\n\n"
+                    
+                    # Não precisamos de delay adicional aqui, o agente já aplica delay
+                else:
+                    # É o resultado final com metadados
+                    logger.info(f"[CHAT] Enviando metadados finais")
+                    
+                    # Garantir que interaction_id seja sempre um inteiro válido
+                    interaction_id = item.get("interaction_id", 0)
+                    if interaction_id is None:
+                        interaction_id = 0
+                    
+                    complete = StreamComplete(
+                        type="complete",
+                        token_usage=item.get("token_usage", 0),
+                        temperature=item.get("temperature", 0),
+                        interaction_id=interaction_id
+                    )
+                    yield f"data: {json.dumps(complete.dict())}\n\n"
+                    await asyncio.sleep(0.05)
+        except Exception as stream_error:
+            logger.error(f"[CHAT] Erro durante streaming: {str(stream_error)}")
+            error_chunk = StreamChunk(type="chunk", content=f"\n\nDesculpe, ocorreu um erro. Por favor, tente novamente.")
+            yield f"data: {json.dumps(error_chunk.dict())}\n\n"
         
         # Encerrar o stream
-        logger.info(f"[STREAM_DEBUG] Stream finalizado após {chunk_count} chunks")
+        logger.info(f"[CHAT] Stream finalizado: {char_count} caracteres enviados")
         yield "data: [DONE]\n\n"
     except Exception as e:
-        logger.error(f"[STREAM_DEBUG] Erro ao gerar streaming: {str(e)}")
+        logger.error(f"[CHAT] Erro crítico: {str(e)}")
         error_json = json.dumps({"error": str(e)})
         yield f"data: {error_json}\n\n"
         yield "data: [DONE]\n\n" 

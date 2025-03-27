@@ -338,4 +338,415 @@ Contribuições são bem-vindas! Por favor, abra uma issue antes de enviar pull 
 
 ## Licença
 
-[MIT](LICENSE) 
+[MIT](LICENSE)
+
+## Streaming de Respostas Token por Token
+
+A API agora suporta streaming avançado token por token (caracter por caracter), permitindo uma experiência de usuário extremamente fluida, semelhante a assistentes de IA populares como ChatGPT.
+
+### Características do Streaming
+
+- **Alta Granularidade**: Cada token (frequentemente apenas uma única letra ou palavra) é transmitido individualmente
+- **Experiência Fluida**: Delays mínimos de 0.01 segundos entre tokens criam uma sensação de digitação em tempo real
+- **Feedback Instantâneo**: Os usuários veem a resposta começando imediatamente, sem esperar por chunks grandes
+- **Metadados Úteis**: Ao final do streaming, são enviados detalhes como tokens usados e ID da interação
+
+### Consumindo o Streaming no Frontend
+
+Usando os Server-Sent Events (SSE), o frontend pode processar cada token à medida que chega:
+
+```javascript
+const streamChat = async (userPrompt) => {
+  const controller = new AbortController();
+  let fullResponse = '';
+  let metadata = null;
+  
+  try {
+    // Elemento onde a resposta será exibida
+    const responseElement = document.getElementById('response');
+    responseElement.innerHTML = ''; // Limpar resposta anterior
+    
+    // Exibir indicador de digitação
+    const typingIndicator = document.createElement('span');
+    typingIndicator.className = 'typing-indicator';
+    typingIndicator.textContent = '▋'; // Cursor de digitação
+    responseElement.appendChild(typingIndicator);
+    
+    // Configurar a request
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: userPrompt }),
+      signal: controller.signal
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Erro na API: ${response.status}`);
+    }
+    
+    // Configurar leitor de stream
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    
+    // Função que processa os eventos no formato SSE
+    const processSSEChunk = (chunk) => {
+      // Dividir em linhas
+      const lines = chunk.split('\n\n');
+      
+      for (const line of lines) {
+        if (!line || !line.startsWith('data: ')) continue;
+        
+        // Extrair os dados JSON
+        const jsonStr = line.replace('data: ', '');
+        
+        // Verificar se é o marcador de fim
+        if (jsonStr === '[DONE]') {
+          console.log('Stream concluído');
+          return;
+        }
+        
+        try {
+          const data = JSON.parse(jsonStr);
+          
+          if (data.type === 'chunk') {
+            // Adicionar o token à resposta completa
+            fullResponse += data.content;
+            
+            // Atualizar a UI com efeito de digitação
+            const textNode = document.createTextNode(data.content);
+            responseElement.insertBefore(textNode, typingIndicator);
+            
+            // Scroll para garantir que o conteúdo mais recente esteja visível
+            responseElement.scrollTop = responseElement.scrollHeight;
+          } 
+          else if (data.type === 'complete') {
+            // Armazenar metadados
+            metadata = {
+              tokenUsage: data.token_usage,
+              temperature: data.temperature,
+              interactionId: data.interaction_id
+            };
+            
+            // Remover o indicador de digitação
+            typingIndicator.remove();
+            
+            // Mostrar metadados, se desejado
+            console.log('Metadados da resposta:', metadata);
+          }
+        } catch (e) {
+          console.error('Erro ao processar chunk:', e);
+        }
+      }
+    };
+    
+    // Iniciar leitura do stream
+    while (true) {
+      const { value, done } = await reader.read();
+      
+      if (done) {
+        console.log('Stream finalizado pelo servidor');
+        break;
+      }
+      
+      // Decodificar e processar o chunk
+      const chunk = decoder.decode(value);
+      processSSEChunk(chunk);
+    }
+    
+    // Remover o indicador de digitação se ainda estiver presente
+    if (typingIndicator.parentNode) {
+      typingIndicator.remove();
+    }
+    
+    // Retornar a resposta completa e metadados
+    return { response: fullResponse, metadata };
+    
+  } catch (error) {
+    console.error('Erro ao processar streaming:', error);
+    
+    // Cancelar a requisição se ainda estiver em andamento
+    controller.abort();
+    
+    throw error;
+  }
+};
+```
+
+### Exemplo de Componente React com Animação de Digitação
+
+Abaixo está um exemplo de componente React que implementa uma experiência de usuário refinada, com animação de cursor piscante e processamento token por token:
+
+```jsx
+import React, { useState, useRef, useEffect } from 'react';
+import './ChatComponent.css'; // Você precisará criar este arquivo CSS
+
+const ChatComponent = () => {
+  const [prompt, setPrompt] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+  
+  // Scroll automático para a mensagem mais recente
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+  
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!prompt.trim()) return;
+    
+    // Adicionar mensagem do usuário
+    const userMessage = { role: 'user', content: prompt };
+    setMessages(prev => [...prev, userMessage]);
+    
+    // Criar uma mensagem vazia para o assistente que será preenchida gradualmente
+    const assistantMessageId = Date.now();
+    setMessages(prev => [...prev, { role: 'assistant', content: '', id: assistantMessageId, isStreaming: true }]);
+    
+    setIsLoading(true);
+    setPrompt('');
+    
+    try {
+      const controller = new AbortController();
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+        signal: controller.signal
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Erro na API: ${response.status}`);
+      }
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      
+      // Processar o stream
+      while (true) {
+        const { value, done } = await reader.read();
+        
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n\n');
+        
+        for (const line of lines) {
+          if (!line || !line.startsWith('data: ')) continue;
+          
+          const jsonStr = line.replace('data: ', '');
+          
+          if (jsonStr === '[DONE]') {
+            break;
+          }
+          
+          try {
+            const data = JSON.parse(jsonStr);
+            
+            if (data.type === 'chunk') {
+              // Adicionar o token à resposta e atualizar a mensagem
+              fullContent += data.content;
+              
+              // Atualizar a mensagem do assistante token por token
+              setMessages(messages => 
+                messages.map(msg => 
+                  msg.id === assistantMessageId 
+                    ? { ...msg, content: fullContent } 
+                    : msg
+                )
+              );
+            } 
+            else if (data.type === 'complete') {
+              // Marcar o streaming como concluído
+              setMessages(messages => 
+                messages.map(msg => 
+                  msg.id === assistantMessageId 
+                    ? { ...msg, isStreaming: false, metadata: {
+                        tokenUsage: data.token_usage,
+                        temperature: data.temperature,
+                        interactionId: data.interaction_id
+                      }} 
+                    : msg
+                )
+              );
+            }
+          } catch (e) {
+            console.error('Erro ao processar chunk:', e);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao processar chat:', error);
+      
+      // Atualizar a mensagem com o erro
+      setMessages(messages => 
+        messages.map(msg => 
+          msg.id === assistantMessageId 
+            ? { ...msg, content: 'Erro ao processar sua solicitação. Por favor, tente novamente.', isStreaming: false, isError: true } 
+            : msg
+        )
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  return (
+    <div className="chat-container">
+      <div className="messages-container">
+        {messages.map((msg, index) => (
+          <div 
+            key={index} 
+            className={`message ${msg.role} ${msg.isError ? 'error' : ''}`}
+          >
+            <div className="message-content">
+              {msg.content}
+              {msg.isStreaming && <span className="cursor-blink">▋</span>}
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+      
+      <form onSubmit={handleSubmit} className="input-form">
+        <input
+          type="text"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="Digite sua pergunta..."
+          disabled={isLoading}
+          className="chat-input"
+        />
+        <button 
+          type="submit" 
+          disabled={isLoading || !prompt.trim()} 
+          className="send-button"
+        >
+          {isLoading ? 'Processando...' : 'Enviar'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+export default ChatComponent;
+```
+
+CSS para o componente acima:
+
+```css
+/* ChatComponent.css */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 600px;
+  max-width: 800px;
+  margin: 0 auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.messages-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  background-color: #f9f9f9;
+}
+
+.message {
+  margin-bottom: 12px;
+  max-width: 80%;
+  padding: 10px 16px;
+  border-radius: 18px;
+  line-height: 1.5;
+  animation: fadeIn 0.3s ease;
+}
+
+.message.user {
+  align-self: flex-end;
+  margin-left: auto;
+  background-color: #2b7ffd;
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background-color: #e9e9e9;
+  color: #333;
+  border-bottom-left-radius: 4px;
+}
+
+.message.error {
+  background-color: #ffebee;
+  color: #c62828;
+}
+
+.cursor-blink {
+  display: inline-block;
+  vertical-align: middle;
+  width: 2px;
+  height: 16px;
+  background-color: #333;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+}
+
+.input-form {
+  display: flex;
+  padding: 10px;
+  background-color: white;
+  border-top: 1px solid #e0e0e0;
+}
+
+.chat-input {
+  flex: 1;
+  padding: 12px 16px;
+  border: 1px solid #d1d1d1;
+  border-radius: 24px;
+  font-size: 16px;
+  outline: none;
+}
+
+.chat-input:focus {
+  border-color: #2b7ffd;
+}
+
+.send-button {
+  margin-left: 10px;
+  padding: 0 20px;
+  background-color: #2b7ffd;
+  color: white;
+  border: none;
+  border-radius: 24px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.send-button:hover:not(:disabled) {
+  background-color: #0062e6;
+}
+
+.send-button:disabled {
+  background-color: #b0b0b0;
+  cursor: not-allowed;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+</css_to_apply> 
