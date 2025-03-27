@@ -37,13 +37,14 @@ class ChatRequest(BaseModel):
         """Verifica se o prompt tem conteúdo significativo para processamento."""
         return len(self.prompt.strip()) > 0
         
-    class Config:
+    model_config = {
         # Configuração para exibir exemplos e tratamento de erros mais detalhado
-        schema_extra = {
+        "json_schema_extra": {
             "example": {
                 "prompt": "Qual é o significado de João 3:16?"
             }
         }
+    }
 
 class StreamChunk(BaseModel):
     """Modelo para um pedaço de streaming da resposta"""

@@ -12,11 +12,14 @@ load_dotenv()
 # Middleware de segurança customizado
 class SecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # Em modo debug, podemos desativar certas verificações
+        is_debug_mode = os.getenv("SECURITY_DEBUG", "false").lower() == "true"
+        
         # Verificar tamanho do corpo da requisição para evitar ataques de DOS
         content_length = request.headers.get("content-length")
         max_size = 1024 * 100  # 100KB
         
-        if content_length and int(content_length) > max_size:
+        if content_length and int(content_length) > max_size and not is_debug_mode:
             return HTTPException(
                 status_code=413, 
                 detail="Payload muito grande. Tamanho máximo permitido: 100KB"
@@ -24,7 +27,7 @@ class SecurityMiddleware(BaseHTTPMiddleware):
             
         # Bloquear requisições com User-Agent vazio (muitos bots)
         user_agent = request.headers.get("user-agent")
-        if not user_agent:
+        if not user_agent and not is_debug_mode:
             return HTTPException(
                 status_code=403, 
                 detail="Requisições sem User-Agent não são permitidas"

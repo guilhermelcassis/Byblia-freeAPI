@@ -7,6 +7,7 @@ from app.api.dependencies import verify_referer, check_rate_limit
 import logging
 import asyncio
 import time
+from pydantic import ValidationError
 
 # Configurar logger
 logger = logging.getLogger(__name__)
@@ -32,12 +33,28 @@ async def chat(
         StreamingResponse: Resposta gerada em formato de streaming
     """
     try:
+        # Log detalhado da requisição para depuração
+        body_content = None
+        try:
+            # Tentar ler o corpo da requisição para depuração
+            body_content = await req.body()
+            logger.info(f"[DEBUG] Corpo da requisição recebido: {body_content}")
+        except Exception as read_error:
+            logger.warning(f"[DEBUG] Não foi possível ler o corpo da requisição: {str(read_error)}")
+        
+        # Log dos headers para depuração
+        logger.info(f"[DEBUG] Headers da requisição: {dict(req.headers)}")
+        
         # Verificar se o prompt está vazio ou tem apenas espaços
         if not request.is_valid_for_processing():
+            logger.warning(f"[DEBUG] Prompt inválido recebido: '{request.prompt}'")
             raise HTTPException(
                 status_code=400,
                 detail="O prompt está vazio. Por favor, digite uma pergunta."
             )
+            
+        # Log do prompt válido
+        logger.info(f"[DEBUG] Prompt válido recebido: '{request.prompt[:50]}...' ({len(request.prompt)} caracteres)")
             
         # Configuração otimizada para streaming de alta performance
         headers = {
@@ -56,8 +73,13 @@ async def chat(
     except HTTPException:
         # Re-lançar exceções HTTP já formadas
         raise
+    except ValidationError as ve:
+        # Capturar erros de validação específicos do Pydantic
+        logger.error(f"[DEBUG] Erro de validação Pydantic: {str(ve)}")
+        raise HTTPException(status_code=422, detail=f"Erro de validação: {str(ve)}")
     except Exception as e:
         logger.error(f"Erro no endpoint de chat: {str(e)}")
+        logger.exception("[DEBUG] Stacktrace completa:")
         raise HTTPException(status_code=500, detail=f"Erro ao processar solicitação: {str(e)}")
 
 async def optimized_token_stream(prompt: str):
