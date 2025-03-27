@@ -1,13 +1,20 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from app.schemas.interaction import FeedbackRequest, FeedbackResponse
 from app.services.supabase_service import InteractionService
+from app.api.dependencies import verify_referer, check_rate_limit
 
 router = APIRouter()
 
 @router.post("/feedback", response_model=FeedbackResponse, status_code=200)
-async def submit_feedback(request: FeedbackRequest):
+async def submit_feedback(
+    request: FeedbackRequest,
+    req: Request,
+    _: None = Depends(verify_referer),
+    __: None = Depends(check_rate_limit)
+):
     """
     Endpoint para receber o feedback do usuário sobre uma interação específica.
+    Protegido com rate limiting e verificação de origem.
     
     Args:
         request: Contém o ID da interação e o feedback (True/False)

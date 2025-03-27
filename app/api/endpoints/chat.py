@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import StreamingResponse
 import json
 from app.schemas.interaction import ChatRequest, StreamChunk, StreamComplete
 from app.services.ai_agent import generate_streaming_response
+from app.api.dependencies import verify_referer, check_rate_limit
 import logging
 import asyncio
 import time
@@ -13,10 +14,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.post("/chat")
-async def chat(request: ChatRequest, req: Request):
+async def chat(
+    request: ChatRequest, 
+    req: Request,
+    _: None = Depends(verify_referer),
+    __: None = Depends(check_rate_limit)
+):
     """
     Endpoint para processar perguntas e gerar respostas usando o agente IA.
     Otimizado para streaming de alta velocidade similar a sites comerciais de LLM.
+    Protegido com rate limiting e verificação de origem.
     
     Args:
         request: Contém o prompt do usuário
