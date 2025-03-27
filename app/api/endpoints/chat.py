@@ -73,7 +73,7 @@ async def real_time_stream(prompt: str):
         
         # Enviar mensagem de inicialização para testar a conexão
         logger.info("[STREAM_DEBUG] Enviando chunk de inicialização")
-        init_chunk = StreamChunk(type="chunk", content="Iniciando...\n")
+        init_chunk = StreamChunk(type="chunk", content="")
         yield f"data: {json.dumps(init_chunk.dict())}\n\n"
         await asyncio.sleep(0.2)  # Delay maior para este primeiro chunk
         
