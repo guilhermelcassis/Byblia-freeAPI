@@ -59,6 +59,9 @@ app.add_middleware(SecurityMiddleware)
 # Configurar CORS para permitir apenas origens autorizadas
 # Por padrão, apenas o frontend Byblia é permitido
 allowed_origins = [
+    "https://byblia.com",
+    "https://www.byblia.com",
+    # Domínios antigos (podem ser removidos após completa migração)
     "https://byblia.vercel.app",
     "https://www.byblia.vercel.app",
     # Adicionar outros subdomínios do Vercel, se necessário
