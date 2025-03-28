@@ -7,6 +7,7 @@ import os
 import time
 from collections import defaultdict
 import threading
+import logging
 
 # Rate limiting - controle simples em memória
 # Para aplicações de maior escala, considere Redis ou outro armazenamento distribuído
@@ -78,7 +79,12 @@ def verify_referer(
         return None
         
     if allowed_domains is None:
-        allowed_domains = ["byblia.vercel.app"]
+        # Adicione aqui todos os domínios de produção válidos
+        allowed_domains = [
+            "byblia.vercel.app",
+            "www.byblia.vercel.app",
+            "vercel.app",  # Mais permissivo para subdomínios do Vercel
+        ]
         
     # Em ambiente de desenvolvimento, permitir localhost e ausência de referer
     is_dev = os.getenv("ENVIRONMENT", "production").lower() == "development"
@@ -111,8 +117,18 @@ def verify_referer(
             )
         return None
     
-    # Verificar se o referer contém um dos domínios permitidos
-    if not any(domain in referer for domain in allowed_domains):
+    # Melhorar a lógica para verificar domínios
+    referer_is_allowed = False
+    for domain in allowed_domains:
+        if domain in referer:
+            referer_is_allowed = True
+            break
+    
+    if not referer_is_allowed:
+        # Log detalhado para depurar problemas de referer
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Referer não permitido: {referer}. Domínios permitidos: {allowed_domains}")
+        
         raise HTTPException(
             status_code=403,
             detail="Acesso não autorizado: origem não permitida"

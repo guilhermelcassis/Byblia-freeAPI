@@ -70,17 +70,45 @@ async def chat(
             media_type="text/event-stream",
             headers=headers
         )
-    except HTTPException:
-        # Re-lançar exceções HTTP já formadas
-        raise
+    except HTTPException as http_ex:
+        # Re-lançar exceções HTTP já formadas, mas garantindo melhor formatação do erro
+        logger.error(f"[DEBUG] Erro HTTP: {http_ex.status_code} - {http_ex.detail}")
+        # Retornar um erro SSE formatado para o cliente
+        async def error_stream():
+            error_json = json.dumps({"error": str(http_ex.detail)})
+            yield f"data: {error_json}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(
+            content=error_stream(),
+            media_type="text/event-stream",
+            headers=headers,
+            status_code=http_ex.status_code
+        )
     except ValidationError as ve:
         # Capturar erros de validação específicos do Pydantic
         logger.error(f"[DEBUG] Erro de validação Pydantic: {str(ve)}")
-        raise HTTPException(status_code=422, detail=f"Erro de validação: {str(ve)}")
+        async def validation_error_stream():
+            error_json = json.dumps({"error": f"Erro de validação: {str(ve)}"})
+            yield f"data: {error_json}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(
+            content=validation_error_stream(),
+            media_type="text/event-stream",
+            status_code=422
+        )
     except Exception as e:
         logger.error(f"Erro no endpoint de chat: {str(e)}")
         logger.exception("[DEBUG] Stacktrace completa:")
-        raise HTTPException(status_code=500, detail=f"Erro ao processar solicitação: {str(e)}")
+        # Retornar o erro como streaming para que o cliente possa processar
+        async def general_error_stream():
+            error_json = json.dumps({"error": f"Erro ao processar solicitação: {str(e)}"})
+            yield f"data: {error_json}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(
+            content=general_error_stream(),
+            media_type="text/event-stream",
+            status_code=500
+        )
 
 async def optimized_token_stream(prompt: str):
     """

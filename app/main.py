@@ -58,7 +58,12 @@ app.add_middleware(SecurityMiddleware)
 
 # Configurar CORS para permitir apenas origens autorizadas
 # Por padrão, apenas o frontend Byblia é permitido
-allowed_origins = ["https://byblia.vercel.app"]
+allowed_origins = [
+    "https://byblia.vercel.app",
+    "https://www.byblia.vercel.app",
+    # Adicionar outros subdomínios do Vercel, se necessário
+    "https://*.vercel.app"  # Permitir qualquer subdomínio do Vercel
+]
 
 # Em ambiente de desenvolvimento, permitir localhost
 if os.getenv("ENVIRONMENT", "production").lower() == "development":
@@ -91,4 +96,13 @@ app.include_router(feedback.router, prefix="/api", tags=["feedback"])
 @app.get("/")
 async def root():
     """Endpoint para verificar se a API está funcionando."""
-    return {"status": "online", "message": "API do Chatbot funcionando!"} 
+    return {"status": "online", "message": "API do Chatbot funcionando!"}
+
+@app.get("/health")
+async def health_check():
+    """Endpoint para verificação de saúde da API."""
+    return {
+        "status": "healthy",
+        "version": app.version,
+        "uptime": "ok"
+    } 
