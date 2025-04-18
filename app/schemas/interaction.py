@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, Dict, Any, Union, Literal
+from typing import Optional, Dict, Any, Union, Literal, List
 import os
 
 # Obter o tamanho máximo do prompt a partir das variáveis de ambiente
@@ -30,6 +30,10 @@ class ChatRequest(BaseModel):
         max_length=MAX_PROMPT_LENGTH, 
         description=f"A pergunta do usuário (máximo {MAX_PROMPT_LENGTH} caracteres)",
     )
+    message_history: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="Histórico de mensagens anteriores para manter contexto da conversa",
+    )
     
     # Método para checar se o prompt é válido para processamento
     # Mesmo se estiver vazio, não rejeitaremos imediatamente
@@ -41,7 +45,8 @@ class ChatRequest(BaseModel):
         # Configuração para exibir exemplos e tratamento de erros mais detalhado
         "json_schema_extra": {
             "example": {
-                "prompt": "Qual é o significado de João 3:16?"
+                "prompt": "Qual é o significado de João 3:16?",
+                "message_history": None
             }
         }
     }
@@ -52,11 +57,12 @@ class StreamChunk(BaseModel):
     content: str
 
 class StreamComplete(BaseModel):
-    """Modelo para a conclusão do streaming com metadados"""
+    """Modelo para os metadados finais da resposta"""
     type: Literal["complete"]
     token_usage: int
     temperature: float
     interaction_id: int
+    new_messages: Optional[List[Dict[str, Any]]] = None
 
 class FeedbackRequest(BaseModel):
     interaction_id: int

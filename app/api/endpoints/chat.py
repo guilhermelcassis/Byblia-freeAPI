@@ -27,7 +27,7 @@ async def chat(
     Protegido com rate limiting e verificação de origem.
     
     Args:
-        request: Contém o prompt do usuário
+        request: Contém o prompt do usuário e opcionalmente o histórico de mensagens
         
     Returns:
         StreamingResponse: Resposta gerada em formato de streaming
@@ -55,6 +55,12 @@ async def chat(
             
         # Log do prompt válido
         logger.info(f"[DEBUG] Prompt válido recebido: '{request.prompt[:50]}...' ({len(request.prompt)} caracteres)")
+        
+        # Log do histórico de mensagens se houver
+        if request.message_history:
+            logger.info(f"[DEBUG] Histórico de mensagens recebido com {len(request.message_history)} mensagens")
+        else:
+            logger.info("[DEBUG] Sem histórico de mensagens")
             
         # Configuração otimizada para streaming de alta performance
         headers = {
@@ -66,7 +72,7 @@ async def chat(
         }
         
         return StreamingResponse(
-            content=optimized_token_stream(request.prompt),
+            content=optimized_token_stream(request.prompt, message_history=request.message_history),
             media_type="text/event-stream",
             headers=headers
         )
@@ -110,13 +116,14 @@ async def chat(
             status_code=500
         )
 
-async def optimized_token_stream(prompt: str):
+async def optimized_token_stream(prompt: str, message_history=None):
     """
     Gera um stream de eventos em tempo real usando tokens nativos do modelo.
     Otimizado para velocidade máxima sem delays artificiais.
     
     Args:
         prompt: A pergunta do usuário
+        message_history: Histórico de mensagens anteriores para contextualização
         
     Yields:
         Tokens no formato SSE (Server-Sent Events)
@@ -132,13 +139,13 @@ async def optimized_token_stream(prompt: str):
         await asyncio.sleep(0.01)
         
         logger.info("[CHAT] Transmitindo tokens...")
-        temperature = None  # Será gerada aleatoriamente
+        temperature = None
         
         try:
             # Contador para log ocasional
             last_log_time = time.time()
             
-            async for item in generate_streaming_response(prompt, temperature):
+            async for item in generate_streaming_response(prompt, temperature, message_history):
                 if isinstance(item, str):
                     # Recebeu um token do modelo
                     buffer += item
@@ -175,11 +182,13 @@ async def optimized_token_stream(prompt: str):
                     if interaction_id is None:
                         interaction_id = 0
                     
+                    # Incluir o novo histórico de mensagens nos metadados finais
                     complete = StreamComplete(
                         type="complete",
                         token_usage=item.get("token_usage", 0),
                         temperature=item.get("temperature", 0),
-                        interaction_id=interaction_id
+                        interaction_id=interaction_id,
+                        new_messages=item.get("new_messages")
                     )
                     yield f"data: {json.dumps(complete.dict())}\n\n"
         except Exception as stream_error:

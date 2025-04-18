@@ -7,7 +7,7 @@ import random
 from dotenv import load_dotenv
 from app.services.supabase_service import InteractionService
 import asyncio
-from typing import AsyncGenerator, Union, Dict, Any, Optional
+from typing import AsyncGenerator, Union, Dict, Any, Optional, List
 import time
 import logging
 
@@ -61,13 +61,14 @@ def get_random_temperature():
     """Gera uma temperatura aleatória dentro dos limites definidos."""
     return random.uniform(MIN_TEMPERATURE, MAX_TEMPERATURE)
 
-async def generate_response(prompt, temperature=None):
+async def generate_response(prompt, temperature=None, message_history=None):
     """
     Gera uma resposta do modelo para a pergunta fornecida usando streaming.
     
     Args:
         prompt: Pergunta do usuário
         temperature: Temperatura usada (se None, uma nova será gerada)
+        message_history: Histórico de mensagens anteriores
         
     Returns:
         Tupla contendo (mensagem_completa, dados_uso, temperatura_usada)
@@ -88,16 +89,24 @@ async def generate_response(prompt, temperature=None):
     # Usar o agente para gerar a resposta com streaming
     try:
         # Usar streaming para gerar a resposta
-        async with agent.run_stream(prompt) as result:
-            async for message in result.stream_text(delta=True):
-                full_message += message
+        if message_history:
+            async with agent.run_stream(prompt, message_history=message_history) as result:
+                async for message in result.stream_text(delta=True):
+                    full_message += message
+        else:
+            async with agent.run_stream(prompt) as result:
+                async for message in result.stream_text(delta=True):
+                    full_message += message
                 
         # Extrair informações de uso
         usage_data = result.usage()
         usage_dict = to_jsonable_python(usage_data)
         total_tokens = usage_dict.get('total_tokens', 0)
         
-        return full_message, total_tokens, temperature
+        # Retornar o novo histórico de mensagens
+        new_messages = result.new_messages()
+        
+        return full_message, total_tokens, temperature, new_messages
         
     except Exception as e:
         # Log do erro
@@ -109,7 +118,10 @@ async def generate_response(prompt, temperature=None):
             agent.model_settings['temperature'] = temperature
             
             # Usar o método não-streaming como fallback
-            result = await agent.run(prompt)
+            if message_history:
+                result = await agent.run(prompt, message_history=message_history)
+            else:
+                result = await agent.run(prompt)
             
             # Tente obter a resposta de diferentes maneiras possíveis
             if hasattr(result, 'content'):
@@ -127,17 +139,26 @@ async def generate_response(prompt, temperature=None):
                     total_tokens = usage_dict.get('total_tokens', 0)
             except:
                 pass
+            
+            # Tentar obter o novo histórico de mensagens
+            new_messages = None
+            if hasattr(result, 'new_messages'):
+                new_messages = result.new_messages()
                 
-            return full_message, total_tokens, temperature
+            return full_message, total_tokens, temperature, new_messages
             
         except Exception as e2:
             print(f"Erro definitivo ao gerar resposta: {str(e2)}")
-            return f"Erro ao processar sua pergunta. Por favor, tente novamente mais tarde.", 0, temperature
+            return f"Erro ao processar sua pergunta. Por favor, tente novamente mais tarde.", 0, temperature, None
 
 # A função process_chat_request foi removida pois se tornou obsoleta.
 # Utilize generate_streaming_response para todas as interações com a API.
 
-async def generate_streaming_response(prompt: str, temperature: Optional[float] = None) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
+async def generate_streaming_response(
+    prompt: str, 
+    temperature: Optional[float] = None,
+    message_history: Optional[List[Dict[str, Any]]] = None
+) -> AsyncGenerator[Union[str, Dict[str, Any]], None]:
     """
     Gera a resposta do modelo em modo streaming, otimizado para velocidade.
     
@@ -148,6 +169,7 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
     Args:
         prompt: A pergunta do usuário
         temperature: A temperatura a ser utilizada pelo modelo (None gera uma aleatória)
+        message_history: Histórico de mensagens anteriores para manter contexto da conversa
         
     Yields:
         União de:
@@ -159,6 +181,7 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
     start_time = time.time()
     agent = None
     new_agent = None
+    new_messages = None
     
     try:
         # Inicializar o agente
@@ -175,18 +198,35 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
         try:
             logger.info(f"[AGENT] streaming com temperatura {temperature}")
             
-            async with agent.run_stream(prompt) as stream:
-                # Utilizar stream_text para obter tokens diretamente do modelo
-                async for chunk in stream.stream_text(delta=True):
-                    if chunk:
-                        token_count += len(chunk)
-                        full_message += chunk
-                        
-                        # Enviar o token diretamente sem processamento adicional
-                        yield chunk
-                        
-                        # Sem delay intencional - velocidade máxima
-                        # similar às interfaces da OpenAI/DeepSeek
+            # Usar message_history se fornecido
+            if message_history:
+                logger.info(f"[AGENT] Usando histórico de mensagens com {len(message_history)} mensagens")
+                async with agent.run_stream(prompt, message_history=message_history) as stream:
+                    # Utilizar stream_text para obter tokens diretamente do modelo
+                    async for chunk in stream.stream_text(delta=True):
+                        if chunk:
+                            token_count += len(chunk)
+                            full_message += chunk
+                            
+                            # Enviar o token diretamente sem processamento adicional
+                            yield chunk
+                    
+                    # Capturar o novo histórico de mensagens
+                    new_messages = stream.new_messages()
+            else:
+                logger.info(f"[AGENT] Sem histórico de mensagens")
+                async with agent.run_stream(prompt) as stream:
+                    # Utilizar stream_text para obter tokens diretamente do modelo
+                    async for chunk in stream.stream_text(delta=True):
+                        if chunk:
+                            token_count += len(chunk)
+                            full_message += chunk
+                            
+                            # Enviar o token diretamente sem processamento adicional
+                            yield chunk
+                            
+                    # Capturar o novo histórico de mensagens
+                    new_messages = stream.new_messages()
             
             logger.info(f"[AGENT] Streaming concluído: {len(full_message)} caracteres em {time.time() - start_time:.2f}s")
             
@@ -196,7 +236,12 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
             try:
                 logger.info("[AGENT] Tentando fallback sem streaming")
                 new_agent.model_settings['temperature'] = 0.1
-                result = await new_agent.run(prompt)
+                
+                # Usar message_history no fallback se fornecido
+                if message_history:
+                    result = await new_agent.run(prompt, message_history=message_history)
+                else:
+                    result = await new_agent.run(prompt)
                 
                 # Extrair a resposta do resultado
                 if hasattr(result, 'content'):
@@ -205,6 +250,10 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
                     full_message = result.message
                 else:
                     full_message = str(result)
+                
+                # Capturar o novo histórico de mensagens
+                if hasattr(result, 'new_messages'):
+                    new_messages = result.new_messages()
                     
                 # Simular streaming no fallback, com chunks menores
                 # para melhor imitar o comportamento real de LLMs
@@ -258,7 +307,8 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
             metadata = {
                 "token_usage": token_usage,
                 "temperature": temperature,
-                "interaction_id": interaction_id
+                "interaction_id": interaction_id,
+                "new_messages": new_messages  # Incluir novo histórico de mensagens
             }
             
             logger.info(f"[AGENT] Resposta completa: {token_usage} tokens, ID: {interaction_id}")
@@ -268,8 +318,8 @@ async def generate_streaming_response(prompt: str, temperature: Optional[float] 
             
         except Exception as e:
             logger.error(f"[AGENT] Erro nos metadados: {str(e)}")
-            yield {"token_usage": 0, "temperature": temperature, "interaction_id": None}
+            yield {"token_usage": 0, "temperature": temperature, "interaction_id": None, "new_messages": new_messages}
     
     except Exception as e:
         logger.error(f"[AGENT] Erro crítico: {str(e)}")
-        yield {"token_usage": 0, "temperature": temperature, "interaction_id": None} 
+        yield {"token_usage": 0, "temperature": temperature, "interaction_id": None, "new_messages": None} 
