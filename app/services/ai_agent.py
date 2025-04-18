@@ -20,7 +20,7 @@ load_dotenv()
 # Configurações padrão para o agente
 DEFAULT_MODEL = os.getenv('COUNSELOR_MODEL')
 MIN_TEMPERATURE = 0.2
-MAX_TEMPERATURE = 1.0
+MAX_TEMPERATURE = 0.7
 
 def get_api_key():
     """Recupera a chave de API do ambiente."""
