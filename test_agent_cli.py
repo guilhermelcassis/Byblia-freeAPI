@@ -2,6 +2,10 @@ import asyncio
 import argparse
 from app.services.ai_agent import generate_streaming_response
 
+
+#python test_agent_cli.py "Acabai de atropelhar uma criançar e ela morreu, o que devo fazer?"
+
+
 async def chat_with_agent(question: str, message_history=None):
     """
     Stream the agent's response to a question
